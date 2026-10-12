@@ -135,6 +135,24 @@ async function winRound(page: Page, p: 'a' | 'b') {
   expect(await page.evaluate(p => window.__sna.answer(p), p)).toBe(true);
 }
 
+/** Round `r`, taken by `p` through `duel.hit` in the SAME page-side poll that finds the round live, which then
+ *  pauses the match (#860). `winRound` finds the answer bubble in one round trip and slices it in a second;
+ *  under CPU load at the fast clock the round expires as a draw in between, or a starved page lets the whole
+ *  rest of the match run out. The pause (#301) holds the round clock and the beat that moves on to the next
+ *  round while the test is between rounds, and the next call resumes it, so the only unpaused stretch is the
+ *  gap from a round starting to this poll seeing it. The arena's slice path is `winRound`'s job (rounds 1–2). */
+async function takeRound(page: Page, p: 'a' | 'b', r: number) {
+  await page.evaluate(() => document.querySelector<HTMLElement>('#resume')?.click());
+  const res = await page.waitForFunction(({ p, r }) => {
+    const s = window.__sna.state();
+    if (s.round !== r || s.decided || s.ended || !s.answer) return false;
+    const won = window.__sna.duel.hit(p, s.answer);
+    if (won === 'won' && r < 10) document.querySelector<HTMLElement>('#pause')?.click();   // the last round's results must show
+    return won;
+  }, { p, r });
+  expect(await res.jsonValue()).toBe('won');
+}
+
 /** Play out a whole 10-round match with Player 1 taking every round, for a test whose subject is the earned
  *  certificate rather than the score — #670 needs two whole matches, so the win itself stays this short. */
 async function winWholeMatch(page: Page) {
@@ -232,6 +250,7 @@ test.describe('Ninja Duel', () => {
   test('both players see the same question, the first correct slice takes the round, and the match ends with the right winner', async ({ page }) => {
     await startDuel(page, dojoSeeds('fresh'));
     expect(await page.evaluate(() => window.__seedMiss), 'the page landed on a day dojoSeeds() did not build').toBe(false);
+    await page.evaluate(() => window.__sna.setSpeed(3));   // #860: a third of the 8× clock — the waves a loaded runner can still act inside
     await expect(page.locator('#round')).toHaveText('Round 1 of 10');
     await expectHandoverHeard(page);   // the second child's one instruction is in round 1's own utterance
     // The same wave in both arenas: each arena launches the ONE question's options, and the answer reaches
@@ -253,7 +272,7 @@ test.describe('Ninja Duel', () => {
     expect(await page.evaluate(() => window.__sna.duel.hit('b', window.__sna.state().answer!))).toBe('ignored');
     // Play out the match: Player 1 wins 6 rounds, Player 2 takes the rest.
     for (let r = 2; r <= 10; r++) {
-      await page.waitForFunction(r => window.__sna.state().round === r, r);
+      if (r === 2) await page.waitForFunction(r => window.__sna.state().round === r, r);   // takeRound waits for its own round, after the resume
       // Round 2: Player 1 cuts a wrong bubble and then still takes the round. The round is won — a wrong slice
       // costs nothing — but Sensei is told what a mission would have scored, a miss, so this is the round that
       // makes `hits < tries` reach the save through the real arena (#374 review, B1).
@@ -261,7 +280,7 @@ test.describe('Ninja Duel', () => {
         await page.waitForFunction(() => window.__sna.bubbles('a').some(b => b.label !== window.__sna.state().answer));
         expect(await page.evaluate(() => window.__sna.wrong('a'))).toBe(true);
       }
-      await winRound(page, r <= 6 ? 'a' : 'b');
+      if (r <= 2) await winRound(page, 'a'); else await takeRound(page, r <= 6 ? 'a' : 'b', r);   // #860: rounds 3–10 off the arena's clock race
     }
     await expect(page.locator('.duel-end')).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('.duel-end h2')).toHaveText('Player 1 wins!');
