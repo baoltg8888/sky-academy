@@ -960,6 +960,33 @@ test.describe('Sky Ninja Academy', () => {
     expect(spoken, `Sprint must stay silent on the correction; got ${JSON.stringify(spoken)}`).not.toContain(`It's ${wrongAnswer}.`);
   });
 
+  test('guest play saves nothing and ends cleanly, from behind the gate only (#948)', async ({ page }) => {
+    test.setTimeout(150_000);
+    await seedPlayer(page);
+    await openGrownUps(page);
+    const keys = () => page.evaluate(() => JSON.stringify(Object.keys(localStorage).sort().map(k => [k, localStorage.getItem(k)])));
+    const before = await keys();
+    await page.click('#guest-start');
+    await expect(page.locator('.home')).toBeVisible();
+    // The same mission the smoke test above plays as a saving player, where it ends with three `.unlock` cards, a
+    // `.dojo-bonus` and a `#cert` button; here none of them may appear, because none was kept (#518 semantics).
+    await startTopic(page, 'reception', 'r-count');
+    for (let stage = 1; stage <= 5; stage++) {
+      await answerAll(page, 5);
+      await expect(page.locator('.celebrate')).toBeVisible();
+      await page.click('#next');
+    }
+    const results = page.locator('.results');
+    await expect(results.locator('h2')).toHaveText('Mission complete!');
+    await expect(results.locator('.unlock')).toHaveCount(0);
+    await expect(results.locator('.dojo-bonus')).toHaveCount(0);
+    await expect(results.locator('#cert')).toHaveCount(0);
+    expect(await keys(), 'localStorage is byte-identical after a full guest mission').toBe(before);
+    await page.reload();
+    await expect(page.locator('.home')).toBeVisible();
+    expect(await keys()).toBe(before);
+  });
+
   test('Relaxed practice: wrong slices cost nothing, ten questions, one coin each right, no stars and no Storm best (#937)', async ({ page }) => {
     await seedPlayer(page);
     await page.click('.island[data-year="year1"]');
