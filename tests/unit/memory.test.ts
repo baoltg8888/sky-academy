@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { clockEmoji, gridFor, hasMemoryDecks, BOND_POOL, LETTER_POOL, Memory, spokenOnFlip, THEMES, pickTheme } from '../../src/game/memory';
 import { YEARS, isKs2, type YearId } from '../../src/curriculum';
-import { clockPhrase } from '../../src/curriculum/year2';
+import { clockPhrase, CONTRACTIONS } from '../../src/curriculum/year2';
 import { CVC, DIGRAPHS, SAME_SOLID, SHAPES_3D } from '../../src/curriculum/util';
 
 function rng(seed: number) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
@@ -162,6 +162,21 @@ describe('memory decks', () => {
       }
       for (const b of bs) expect(b.text).not.toBe('5');
     }
+  });
+  // #962: each full form has exactly one contraction partner under the bank's map; no face repeats.
+  it('Year 2 Short forms: 8 pairs, one partner per face, no "can not"', () => {
+    const theme = pickTheme('year2', rng(1), 'contractions');
+    expect(theme.id).toBe('contractions');
+    const partner = new Map<string, string>(CONTRACTIONS);
+    for (let seed = 1; seed <= 200; seed++) {
+      const pairs = theme.pairs(rng(seed));
+      expect(pairs.length).toBe(8);
+      const faces = pairs.flatMap(p => [p.a, p.b]);
+      expect(new Set(faces.map(f => f.text)).size, `seed ${seed} distinct`).toBe(16);
+      for (const p of pairs) expect(partner.get(p.a.text), `seed ${seed} ${p.a.text}`).toBe(p.b.text);
+      expect(faces.map(f => f.text)).not.toContain('can not');
+    }
+    expect(new Set(Array.from({ length: 200 }, (_, i) => theme.pairs(rng(i + 1)).flatMap(p => p.a.text)).flat()).size).toBe(CONTRACTIONS.length);
   });
   it('pickTheme falls back to a random theme of the year when the id is unknown', () => {
     expect(THEMES.year1!.map(t => t.id)).toContain(pickTheme('year1', rng(9), 'nope').id);
